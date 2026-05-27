@@ -27,6 +27,17 @@ from shared.logging import get_logger
 
 logger = get_logger(__name__)
 
+# NPR → USD conversion rate (approximate; update as needed)
+_NPR_TO_USD = 0.0075
+
+# Fallback per-night hotel estimate in USD when no price data is available.
+# Serper returns Google Search results which do not include structured prices,
+# so this is used whenever hotels are found but no price can be extracted.
+_HOTEL_FALLBACK_PER_NIGHT_USD = 60.0
+
+# Default daily living expenses per day in USD (meals, transport, misc)
+_DAILY_EXPENSES_USD = 40.0
+
 budget_agent_card = AgentCard(
     name="budget",
     description="Estimates trip budget from flight and hotel data.",
@@ -51,6 +62,125 @@ budget_agent_card = AgentCard(
 )
 
 
+def _extract_nights(intl_flight_data: dict, dom_flight_data: dict) -> int:
+    """
+    Derive trip length in nights from the international flight date range.
+    Falls back to 1 for domestic-only trips, or 3 if nothing is available.
+    """
+    start = intl_flight_data.get("start_date", "")
+    end   = intl_flight_data.get("end_date", "")
+
+    if start and end and start != end:
+        try:
+            from datetime import date
+            d0 = date.fromisoformat(start)
+            d1 = date.fromisoformat(end)
+            nights = (d1 - d0).days
+            if nights > 0:
+                return nights
+        except ValueError:
+            pass
+
+    # Domestic-only trip — default to 1 night
+    if dom_flight_data.get("offers"):
+        return 1
+
+    return 3  # final fallback
+
+
+def _domestic_flight_cost(dom_flight_data: dict) -> tuple[float, int, str]:
+    """
+    Return (cost_usd, flights_found, notes).
+    Reads the cheapest `fare_npr` from offers[] and converts to USD.
+    """
+    offers = dom_flight_data.get("offers", [])
+    if not offers:
+        return 0.0, 0, ""
+
+    fares_usd = []
+    for offer in offers:
+        raw = offer.get("fare_npr", "")
+        try:
+            fare_npr = float(str(raw).replace(",", "").strip())
+            fares_usd.append(round(fare_npr * _NPR_TO_USD, 2))
+        except (ValueError, TypeError):
+            pass
+
+    if not fares_usd:
+        # Offers exist but fares are unparseable — use a conservative fallback
+        logger.warning("Domestic offers found but no parseable fare_npr; using fallback.")
+        return 50.0, len(offers), "fare_npr unparseable, used $50 fallback"
+
+    cheapest = min(fares_usd)
+    note = f"cheapest of {len(fares_usd)} fares at NPR→USD rate {_NPR_TO_USD}"
+    return cheapest, len(offers), note
+
+
+def _intl_flight_cost(intl_flight_data: dict) -> tuple[float, bool, str]:
+    """
+    Return (cost_usd, has_data, notes).
+    eSewa returns a dict of date→price entries in `fares`.
+    We take the minimum available fare across all dates.
+    """
+    fares = intl_flight_data.get("fares", {})
+    if not fares:
+        return 0.0, False, ""
+
+    prices: list[float] = []
+
+    if isinstance(fares, dict):
+        # Structure: { "2026-07-15": { "price": 450.0, ... }, ... }
+        # or flat:   { "2026-07-15": 450.0, ... }
+        for value in fares.values():
+            if isinstance(value, dict):
+                raw = value.get("price") or value.get("fare") or value.get("amount")
+            else:
+                raw = value
+            try:
+                prices.append(float(raw))
+            except (TypeError, ValueError):
+                pass
+
+    elif isinstance(fares, list):
+        # Some APIs return a list of fare objects
+        for entry in fares:
+            if isinstance(entry, dict):
+                raw = entry.get("price") or entry.get("fare") or entry.get("amount")
+            else:
+                raw = entry
+            try:
+                prices.append(float(raw))
+            except (TypeError, ValueError):
+                pass
+
+    if prices:
+        cheapest = min(prices)
+        note = f"cheapest of {len(prices)} fare date(s)"
+        return cheapest, True, note
+
+    # fares key exists but structure is unrecognised — use a conservative fallback
+    logger.warning("intl fares present but no parseable price found; using fallback.")
+    return 400.0, True, "fare structure unrecognised, used $400 fallback"
+
+
+def _hotel_cost(hotel_data: dict, nights: int) -> tuple[float, int, str]:
+    """
+    Return (cost_usd, hotels_found, notes).
+    Serper (Google Search) results do not carry structured nightly prices,
+    so we use _HOTEL_FALLBACK_PER_NIGHT_USD when hotels are present.
+    """
+    hotels = hotel_data.get("hotels", [])
+    if not hotels:
+        return 0.0, 0, ""
+
+    cost = round(_HOTEL_FALLBACK_PER_NIGHT_USD * nights, 2)
+    note = (
+        f"{nights} night(s) × ${_HOTEL_FALLBACK_PER_NIGHT_USD}/night estimate "
+        f"(Serper results have no structured price)"
+    )
+    return cost, len(hotels), note
+
+
 class BudgetExecutor(AgentExecutor):
 
     async def execute(
@@ -72,7 +202,7 @@ class BudgetExecutor(AgentExecutor):
         try:
             instruction = context.get_user_input()
 
-            # Extract JSON blob from instruction
+            # Extract JSON blob injected by the planner
             json_start = instruction.find("{")
             data = json.loads(instruction[json_start:]) if json_start != -1 else {}
 
@@ -81,28 +211,23 @@ class BudgetExecutor(AgentExecutor):
             hotel_data       = data.get("hotel", {})
             weather_data     = data.get("weather", {})
 
-            nights    = 3
-            trip_days = 3
+            # Derive trip length from actual flight dates
+            nights    = _extract_nights(intl_flight_data, dom_flight_data)
+            trip_days = max(nights, 1)
 
-            # Domestic flight cost estimate
-            dom_offers     = dom_flight_data.get("offers", [])
-            dom_flight_cost = 50.0 if dom_offers else 0.0    # USD equivalent estimate
+            # --- Flight costs (read real prices) ---
+            dom_cost,  dom_count,  dom_note  = _domestic_flight_cost(dom_flight_data)
+            intl_cost, intl_found, intl_note = _intl_flight_cost(intl_flight_data)
 
-            # International flight cost estimate
-            intl_fares     = intl_flight_data.get("fares", {})
-            intl_has_data  = bool(intl_fares)
-            intl_flight_cost = 400.0 if intl_has_data else 0.0
+            # --- Hotel cost (estimate per night, Serper has no price data) ---
+            hotel_cost, hotel_count, hotel_note = _hotel_cost(hotel_data, nights)
 
-            # Hotel cost estimate
-            hotels     = hotel_data.get("hotels", [])
-            hotel_cost = 60.0 * nights if hotels else 0.0
+            # --- Daily expenses ---
+            daily_cost = round(_DAILY_EXPENSES_USD * trip_days, 2)
 
-            # Daily expenses
-            daily_cost = 40.0 * trip_days
+            total = round(dom_cost + intl_cost + hotel_cost + daily_cost, 2)
 
-            total = dom_flight_cost + intl_flight_cost + hotel_cost + daily_cost
-
-            # Weather summary if available
+            # --- Weather summary ---
             weather_summary = None
             if weather_data:
                 current = weather_data.get("current", {})
@@ -112,24 +237,38 @@ class BudgetExecutor(AgentExecutor):
                     "wind_speed":  current.get("wind_speed_10m"),
                 }
 
+            # Collect transparency notes
+            notes: list[str] = []
+            if dom_note:
+                notes.append(f"Domestic flight: {dom_note}.")
+            if intl_note:
+                notes.append(f"International flight: {intl_note}.")
+            if hotel_note:
+                notes.append(f"Hotel: {hotel_note}.")
+            notes.append(
+                f"Daily expenses: ${_DAILY_EXPENSES_USD}/day × {trip_days} day(s)."
+            )
+
             payload = {
-                "currency":           "USD",
-                "nights":             nights,
-                "days":               trip_days,
-                "domestic_flight":    dom_flight_cost,
-                "intl_flight":        intl_flight_cost,
-                "hotel_cost":         hotel_cost,
-                "daily_expenses":     daily_cost,
-                "total":              total,
-                "weather_summary":    weather_summary,
-                "dom_flights_found":  len(dom_offers),
-                "hotels_found":       len(hotels),
-                "notes": (
-                    "Flight and hotel costs are estimates. "
-                    "Domestic flight ~$50 USD, international ~$400 USD. "
-                    "Actual prices may vary."
-                ),
+                "currency":          "USD",
+                "nights":            nights,
+                "days":              trip_days,
+                "domestic_flight":   dom_cost,
+                "intl_flight":       intl_cost,
+                "hotel_cost":        hotel_cost,
+                "daily_expenses":    daily_cost,
+                "total":             total,
+                "weather_summary":   weather_summary,
+                "dom_flights_found": dom_count,
+                "intl_fares_found":  intl_found,
+                "hotels_found":      hotel_count,
+                "notes":             " ".join(notes),
             }
+
+            logger.info(
+                "Budget for task %s: dom=$%.2f intl=$%.2f hotel=$%.2f daily=$%.2f → total=$%.2f",
+                context.task_id, dom_cost, intl_cost, hotel_cost, daily_cost, total,
+            )
 
             await event_queue.enqueue_event(
                 new_data_artifact_update_event(
