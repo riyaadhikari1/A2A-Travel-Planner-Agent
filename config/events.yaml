@@ -1,0 +1,5 @@
+terminal_events:
+  - completed
+  - failed
+  - canceled
+  - clarification_needed

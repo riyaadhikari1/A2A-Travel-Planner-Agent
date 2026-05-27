@@ -1,0 +1,68 @@
+routing: |
+  User request: {user_input}
+
+  ## YOUR TASK
+  Return a JSON array of agent calls for this travel request.
+
+  ## SCHEMA (each item must follow this exactly)
+  {{
+    "agent": "<exact agent name from the system prompt>",
+    "instruction": "<instruction string in the exact format below>"
+  }}
+
+  ## INSTRUCTION FORMATS (follow exactly)
+  - weather:         "Get weather in <City>"
+  - domestic_flight: "Find flights from <IATA> to <IATA> on <YYYY-MM-DD> for <N> adult economy"
+  - intl_flight:     "Find international flights from KTM to <City> from <YYYY-MM-DD> to <YYYY-MM-DD>"
+  - hotel:           "Find hotels in <City>"
+  - budget:          "Estimate budget for trip with the following data: {{}}"
+
+  ## IATA CODES FOR NEPAL CITIES
+  Kathmandu=KTM, Pokhara=PKR, Lukla=LUA, Bharatpur=BHR,
+  Biratnagar=BIR, Nepalgunj=KEP, Janakpur=JKR, Dhangadhi=DHI
+
+  ## FEW-SHOT EXAMPLES
+
+  Request: "I want to fly from Kathmandu to Bangkok on July 15 2026 and stay for 5 days"
+  Response:
+  [
+    {{"agent": "weather", "instruction": "Get weather in Bangkok"}},
+    {{"agent": "intl_flight", "instruction": "Find international flights from KTM to Bangkok from 2026-07-15 to 2026-07-20"}},
+    {{"agent": "hotel", "instruction": "Find hotels in Bangkok"}},
+    {{"agent": "budget", "instruction": "Estimate budget for trip with the following data: {{}}"}}
+  ]
+
+  Request: "Book me a flight from Kathmandu to Pokhara next week"
+  Response:
+  [
+    {{"agent": "weather", "instruction": "Get weather in Pokhara"}},
+    {{"agent": "domestic_flight", "instruction": "Find flights from KTM to PKR on 2026-05-24 for 1 adult economy"}},
+    {{"agent": "hotel", "instruction": "Find hotels in Pokhara"}},
+    {{"agent": "budget", "instruction": "Estimate budget for trip with the following data: {{}}"}}
+  ]
+
+  Request: "What's the weather like in Dubai?"
+  Response:
+  [
+    {{"agent": "weather", "instruction": "Get weather in Dubai"}}
+  ]
+
+  Request: "Plan a trip from KTM to Bangkok on 2026-07-15"
+  Response:
+  [
+    {{"agent": "weather", "instruction": "Get weather in Bangkok"}},
+    {{"agent": "intl_flight", "instruction": "Find international flights from KTM to Bangkok from 2026-07-15 to 2026-07-18"}},
+    {{"agent": "hotel", "instruction": "Find hotels in Bangkok"}},
+    {{"agent": "budget", "instruction": "Estimate budget for trip with the following data: {{}}"}}
+  ]
+
+  Request: "Flights from Kathmandu to Lukla for trekking"
+  Response:
+  [
+    {{"agent": "weather", "instruction": "Get weather in Lukla"}},
+    {{"agent": "domestic_flight", "instruction": "Find flights from KTM to LUA on 2026-06-16 for 1 adult economy"}},
+    {{"agent": "budget", "instruction": "Estimate budget for trip with the following data: {{}}"}}
+  ]
+
+  ## NOW RESPOND FOR THE ACTUAL USER REQUEST ABOVE
+  Output only the JSON array. Nothing else.

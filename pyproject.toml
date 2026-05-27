@@ -1,0 +1,39 @@
+[project]
+name = "a2a-travel"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "a2a-sdk>=1.0.3",
+    "aiosqlite>=0.22.1",
+    "asyncpg>=0.31.0",
+    "fastapi>=0.115.0",
+    "httpx>=0.28.1",
+    "openai>=1.50.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.2",
+    "redis[asyncio]>=5.2.0",
+    "sqlalchemy>=2.0.36",
+    "sse-starlette>=2.1.3",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "shared",
+    "gateway",
+    "orchestrator",
+    "agents",
+    "state",
+    "database",
+    "config",
+    "prompts",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"

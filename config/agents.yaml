@@ -1,0 +1,30 @@
+agents:
+  weather:
+    name: weather
+    description: Provides weather forecasts using Open-Meteo.
+    url: http://localhost:8001
+    version: "1.0.0"
+
+  domestic_flight:
+    name: domestic_flight
+    description: Searches domestic flight schedules using tripturbo.
+    url: http://localhost:8002
+    version: "1.0.0"
+
+  intl_flight:
+    name: intl_flight
+    description: Searches international flight schedules using esewa.
+    url: http://localhost:8003
+    version: "1.0.0"
+
+  hotel:
+    name: hotel
+    description: Searches for hotels using serper.
+    url: http://localhost:8004
+    version: "1.0.0"
+
+  budget:
+    name: budget
+    description: Estimates trip budget from flight and hotel data.
+    url: http://localhost:8005
+    version: "1.0.0"
