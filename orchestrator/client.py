@@ -48,7 +48,7 @@ class OrchestratorClient:
         )
 
         try:
-            start = asyncio.get_event_loop().time()
+            start = asyncio.get_running_loop().time()
 
             message_id = str(uuid.uuid4())
 
@@ -114,7 +114,7 @@ class OrchestratorClient:
 
                 await client.close()
 
-            duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
+            duration_ms = int((asyncio.get_running_loop().time() - start) * 1000)
 
             if artifact_payload:
                 logger.info(
